@@ -1,0 +1,104 @@
+from scipy.io import wavfile
+import time
+import pyaudio
+import numpy as np 
+import dpkt
+import array
+import wave
+import struct
+
+def is_rtp_packet(payload):
+
+
+  # Check RTP version (first 2 bits)
+  if (payload[0] & 0xC0) != 0x80:
+      return False
+
+  # Extract Payload Type- PT
+  pt = (payload[1] & 0x7F)
+
+  # Check Padding bit 
+  padding = (payload[1] & 0x20) >> 5
+
+  # Check sequence number
+  # Sequence number occupies 16 bits, need to combine multiple bytes
+  seq_number = (payload[2] << 8) | payload[3]
+
+  if seq_number < 0 or seq_number > 65535:
+      return False
+
+  # Validate PT based on expected format 
+  valid_pt_values = {0: 8}  # Example mapping for G.711 audio (PT=0)
+  if pt not in valid_pt_values:
+      return False
+
+  return True
+
+
+def extract_rtp_payloads_from_pcap(pcap_file):
+    decoded_audio_list = []
+    with open(pcap_file, 'rb') as file:
+        pcap = dpkt.pcap.Reader(file)
+        for timestamp, buf in pcap:
+            eth = dpkt.ethernet.Ethernet(buf)
+            if isinstance(eth.data, dpkt.ip.IP) and isinstance(eth.data.data, dpkt.udp.UDP):
+                udp = eth.data.data
+                if is_rtp_packet(udp.data):
+                    rtp_payload = udp.data
+                    print(rtp_payload)
+                    decoded_audio_list.append(rtp_payload)
+    return decoded_audio_list
+
+def decode_g711(data, codec='mu-law'):
+    if codec == 'mu-law':
+        fmt = 'b' * len(data)
+    elif codec == 'a-law':
+        fmt = 'b' * len(data)
+    else:
+        raise ValueError("Unsupported codec: {}".format(codec))
+    return np.array(struct.unpack(fmt, data))
+    
+
+
+def play_audio(decoded_audio, sample_rate, chunk_size=900000000000000000000, delay=0.0000000000000000000000001):
+    try:
+        
+        p = pyaudio.PyAudio()
+        stream = p.open(format=pyaudio.paInt8,
+                    channels=2,
+                    rate=sample_rate,
+                    output=True)
+        for audio_data in decoded_audio:
+           
+           stream.write(audio_data.astype(np.int8).tobytes())
+           time.sleep(delay)
+        stream.stop_stream()
+        stream.close()
+        p.terminate()
+        
+    except Exception as e:
+        print("error occured",e)
+
+
+
+pcap_file = r"<PATH TO PCAP FILE>"
+decoded_payloads = extract_rtp_payloads_from_pcap(pcap_file)
+print("Number of RTP packets:", len(decoded_payloads))
+
+rtp_packets=decoded_payloads
+codec = "mu-law"
+decoded_audio_lis=[]
+for hexdump in rtp_packets:
+    
+    decoded_audio = decode_g711(hexdump, codec)
+    
+    
+    decoded_audio_lis.append(decoded_audio)
+
+
+
+#print("hexdump in binary ",binary_data)
+#print("decoded audio ", decoded_audio)
+print("decoded audio",decoded_audio_lis)
+sample_rate=8000
+play_audio(decoded_audio_lis, sample_rate)
